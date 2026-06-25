@@ -2,7 +2,7 @@
 use crate::io::InputUtil;
 use std::io::{self, BufRead, Write};
 
-pub struct Auth<R: BufRead, W: Write> {
+pub struct AuthUtil<R: BufRead, W: Write> {
     iou: InputUtil<R, W>
 }
 
@@ -23,7 +23,7 @@ pub enum SecureTextFreq {
     Everytime
 }
 
-impl<R: BufRead, W: Write> Auth<R, W> {
+impl<R: BufRead, W: Write> AuthUtil<R, W> {
     pub fn new(iou: InputUtil<R, W>) -> Self {
         Self { iou }
     }
@@ -35,6 +35,7 @@ impl<R: BufRead, W: Write> Auth<R, W> {
         let mut password = "".to_string();
         
         let _raw_guard = self.iou.raw_mode()?;
+        let len = desc.secure_text.len();
 
         loop {
             if desc.frequency == SecureTextFreq::Once {
@@ -51,7 +52,7 @@ impl<R: BufRead, W: Write> Auth<R, W> {
                 if !password.is_empty() {
                     password.pop();
                     if desc.frequency == SecureTextFreq::Everytime {
-                        write!(self.iou.writer, "\x08 \x08")?;
+                        write!(self.iou.writer, "{}{}{}", "\x08".repeat(len), " ".repeat(len), "\x08".repeat(len))?;
                         self.iou.writer.flush()?;
                     }
                 }
@@ -59,13 +60,12 @@ impl<R: BufRead, W: Write> Auth<R, W> {
                 if let Ok(ch) = std::str::from_utf8(&[byte]) {
                     password.push_str(ch);
                     if desc.frequency == SecureTextFreq::Everytime {
-                        write!(self.iou.writer, "*")?;
+                        write!(self.iou.writer, "{}", &desc.secure_text)?;
                         self.iou.writer.flush()?;
                     }
                 }
             }
             if desc.frequency == SecureTextFreq::Once {
-                let len = desc.secure_text.len();
                 write!(self.iou.writer, "{}{}{}", "\x08".repeat(len), " ".repeat(len), "\x08".repeat(len))?;
                 self.iou.writer.flush()?;
             }
@@ -76,5 +76,22 @@ impl<R: BufRead, W: Write> Auth<R, W> {
 
     pub fn read_secure(&mut self, prompt: &str) -> io::Result<String> {
         self.read_secure_custom(prompt, SecureTextDesc::new("*", SecureTextFreq::Everytime))
+    }
+
+    pub fn read_hidden(&mut self, prompt: &str) -> io::Result<String> {
+        self.read_secure_custom(prompt, SecureTextDesc::new("", SecureTextFreq::Everytime))
+    }
+
+    pub fn read_confirmed<F>(&mut self, mut f: F) -> io::Result<Option<String>>
+    where
+        F: FnMut(&mut AuthUtil<R, W>) -> io::Result<String>
+    {
+        let v = f(self)?;
+        let v2 = self.read_hidden("Confirm: ")?;
+        Ok(if v == v2 { 
+            Some(v)
+        } else {
+            None
+        })
     }
 }
